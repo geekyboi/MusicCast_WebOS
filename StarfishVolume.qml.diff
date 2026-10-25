@@ -1,0 +1,167 @@
+--- a/StarfishVolume.qml
++++ b/StarfishVolume.qml
+@@ -34,8 +34,77 @@
+                             LS.audioService.soundOutput === "tv_speaker_external_arc_harmony" ||
+                             LS.audioService.soundOutput === "wow_cast" ||
+                             LS.audioService.soundOutput === "tv_speaker_wow_cast"
+-    property bool syncable: LS.audioService.volumeSyncable
++    property bool syncable: LS.audioService.volumeSyncable || ampMode
+     property bool harmony: false
++
++    // osd-patch: show the Yamaha amp's own level (from its MusicCast API) on HDMI ARC,
++    // where the amp doesn't report volume over CEC. Any failure falls back to the arrows.
++    property string ampHost: "AMP_IP"
++    property bool ampOk: false
++    property int ampVolume: 0
++    property int ampMax: 161
++    property bool ampMuted: false
++    property string ampText: ""
++    property int ampSeq: 0
++    property bool ampMode: ampOk && !LS.audioService.volumeSyncable &&
++                           (LS.audioService.soundOutput === "external_arc" ||
++                            LS.audioService.soundOutput === "external_arc_sound_mode_sync")
++    property int levelNow: ampMode ? ampVolume : LS.audioService.volume
++    property int levelMax: ampMode ? ampMax : LS.audioService.volumeMax
++
++    function ampGet(path, onJson) {
++        var xhr = new XMLHttpRequest();
++        var seq = ++root.ampSeq;
++        var guard = Qt.createQmlObject('import QtQuick 2.4; Timer { interval: 800 }', root);
++        guard.triggered.connect(function() { xhr.abort(); guard.destroy(); if (seq === root.ampSeq) root.ampOk = false; });
++        xhr.onreadystatechange = function() {
++            if (xhr.readyState !== XMLHttpRequest.DONE || !guard.running)
++                return;
++            guard.stop(); guard.destroy();
++            var j = null;
++            try { j = JSON.parse(xhr.responseText); } catch (e) {}
++            if (xhr.status === 200 && j && j.response_code === 0)
++                onJson(j);
++            else if (seq === root.ampSeq)
++                root.ampOk = false;
++        };
++        xhr.open("GET", "http://" + root.ampHost + "/YamahaExtendedControl/v1/" + path);
++        guard.start();
++        xhr.send();
++    }
++
++    function ampFeatures() {
++        ampGet("system/getFeatures", function(j) {
++            (j.zone || []).forEach(function(z) {
++                if (z.id !== "main") return;
++                (z.range_step || []).forEach(function(r) { if (r.id === "volume" && r.max > 0) root.ampMax = r.max; });
++            });
++        });
++    }
++
++    function ampRefresh() {
++        ampGet("main/getStatus", function(j) {
++            if (j.power !== "on" || typeof j.volume !== "number") { root.ampOk = false; return; }
++            root.ampVolume = j.volume;
++            root.ampMuted = j.mute === true;
++            var av = j.actual_volume;
++            root.ampText = root.ampMuted ? "MUTE" :
++                           (av && av.unit === "dB" && typeof av.value === "number") ? av.value.toFixed(1) + " dB" : j.volume.toString();
++            root.ampOk = true;
++            root.ampBarLength();
++        });
++    }
++
++    function ampBarLength() {
++        if (!ampMode) return;
++        var len = (ampVolume - 1) * Settings.local.volume.barMiddleHeight / (ampMax - 2);
++        root.volumeBarMiddleLength = Math.max(0, Math.min(len, Settings.local.volume.barMiddleHeight));
++    }
++
++    Timer { id: ampFollowUp1; interval: 250; onTriggered: root.ampRefresh() }
++    Timer { id: ampFollowUp2; interval: 700; onTriggered: root.ampRefresh() }
++
++    Component.onCompleted: { ampFeatures(); ampRefresh(); }
+     property bool isInternalMode: LS.audioService.mode === "internal"
+     property bool volumeBarVisible: indicator.volumeBarVisible
+ 
+@@ -75,6 +144,12 @@
+     property var languageStyle: LanguageStyleObj.LanguageStyle.getStyle(Settings.l10n.locale)
+ 
+     function update() {
++        if (LS.audioService.soundOutput === "external_arc" || LS.audioService.soundOutput === "external_arc_sound_mode_sync") {
++            ampBarLength();
++            ampRefresh();
++            ampFollowUp1.restart();
++            ampFollowUp2.restart();
++        }
+         switch (LS.audioService.soundOutput) {
+         case "external_optical":
+         case "external_arc":
+@@ -224,7 +299,39 @@
+                     }
+                 }
+             }
+-            visible: indicator.volumeLevelIconVisible
++            visible: indicator.volumeLevelIconVisible && !root.ampMode
++        }
++
++        TextMetrics {
++            id: ampWidest
++            font.family: root.languageStyle.normal600.fontFamily[0]
++            font.pixelSize: Settings.local.volume.numberFontSize
++            text: "+88.5 dB"
++        }
++
++        Text {
++            id: ampLevelText
++            anchors.left: sourceIcon.right
++            anchors.right: volumeBar.left
++            anchors.rightMargin: Settings.local.volume.iconRightMargin[0]
++            anchors.verticalCenter: sourceIcon.verticalCenter
++            height: sourceIcon.height
++            font.family: root.languageStyle.normal600.fontFamily[0]
++            // one fixed size, sized so the widest label fits, so it doesn't change as the number does
++            font.pixelSize: Math.floor(Settings.local.volume.numberFontSize * Math.min(1, width / Math.max(1, ampWidest.width)))
++            color: Settings.local.volume.numberFontColor
++            horizontalAlignment: Text.AlignRight
++            verticalAlignment: Text.AlignVCenter
++            text: root.ampText
++            visible: indicator.volumeLevelIconVisible && root.ampMode
++            layer.enabled: true
++            layer.effect: DropShadow {
++                transparentBorder: true
++                verticalOffset: Settings.local.volume.numberShadowVOffset
++                color: Settings.local.volume.numberShadowColor
++                radius: Settings.local.volume.numberShadowRadius
++                samples: Settings.local.volume.numberShadowSamples
++            }
+         }
+ 
+         Image {
+@@ -232,7 +339,7 @@
+             source: sourceIconImage
+             width: Settings.local.volume.iconSize
+             height: Settings.local.volume.iconSize
+-            property int position: volumeRow.visible ? (LS.audioService.volume.toString()).length : 0
++            property int position: root.ampMode ? 3 : volumeRow.visible ? (LS.audioService.volume.toString()).length : 0
+             anchors.verticalCenter: parent.verticalCenter
+             anchors.right: volumeBar.left
+             anchors.rightMargin: Settings.local.volume.iconRightMargin[position]
+@@ -252,11 +359,11 @@
+                 anchors.topMargin: Settings.local.volume.barGageTopMargin
+                 anchors.horizontalCenter: parent.horizontalCenter
+                 source: Settings.local.volume.barGageTop
+-                visible: (LS.audioService.volume >= LS.audioService.volumeMax)
++                visible: (root.levelNow >= root.levelMax)
+             }
+             Image {
+                 source: Settings.local.volume.barGage
+-                visible: (LS.audioService.volume > (root.minVolume + 1))
++                visible: (root.levelNow > (root.minVolume + 1))
+                 anchors.bottom: volumeBarBottom.top
+                 anchors.horizontalCenter: parent.horizontalCenter
+                 fillMode: Image.Stretch
+@@ -268,7 +375,7 @@
+                 anchors.bottom: parent.bottom
+                 anchors.bottomMargin: Settings.local.volume.barGageBottomMargin
+                 anchors.horizontalCenter: parent.horizontalCenter
+-                visible: (LS.audioService.volume > root.minVolume)
++                visible: (root.levelNow > root.minVolume)
+             }
+         }
+ 

@@ -1,0 +1,27 @@
+#!/bin/sh
+# Shows a Yamaha MusicCast amp's level on the TV's own volume bar (HDMI ARC).
+# Bind-mounts /home/root/osd-patch/StarfishVolume.qml over LG's file at boot.
+# Skips if /home/root/osd-patch/disable exists, or if LG's file has changed (firmware update).
+# Remove: run uninstall.sh, or rm /var/lib/webosbrew/init.d/40-osd-volume and reboot.
+F=/usr/lib/qml/WebOSCompositor/views/volume/StarfishVolume.qml
+P=/home/root/osd-patch/StarfishVolume.qml
+ORIG_MD5=808fd0cd00451235b098876477276ad1
+LOG=/tmp/osd-patch.log
+
+[ -f /home/root/osd-patch/disable ] && { echo "$(date) disabled by flag" >> $LOG; exit 0; }
+[ -f "$P" ] || exit 0
+grep -q " $F " /proc/mounts && exit 0
+[ "$(md5sum < "$F" | cut -d' ' -f1)" = "$ORIG_MD5" ] || { echo "$(date) LG file changed, skipping" >> $LOG; exit 0; }
+
+# If surface-manager is already running, restart it so it reads the patched file. This runs
+# inline (about 1 s, capped at 15 s) and is named 40- so it finishes before anything at 50-
+# (like web-OSome's start-up script) opens an app. If it hasn't started yet, the mount is
+# enough: it reads the file when it starts.
+mount --bind "$P" "$F" || { echo "$(date) mount failed" >> $LOG; exit 0; }
+if systemctl is-active -q surface-manager-daemon.service; then
+  timeout 15 systemctl restart surface-manager-daemon.service
+  echo "$(date) applied, surface-manager restarted (exit $?)" >> $LOG
+else
+  echo "$(date) applied before surface-manager started" >> $LOG
+fi
+exit 0
