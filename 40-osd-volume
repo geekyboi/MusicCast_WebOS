@@ -13,15 +13,38 @@ LOG=/tmp/osd-patch.log
 grep -q " $F " /proc/mounts && exit 0
 [ "$(md5sum < "$F" | cut -d' ' -f1)" = "$ORIG_MD5" ] || { echo "$(date) LG file changed, skipping" >> $LOG; exit 0; }
 
-# If surface-manager is already running, restart it so it reads the patched file. This runs
-# inline (about 1 s, capped at 15 s) and is named 40- so it finishes before anything at 50-
-# (like web-OSome's start-up script) opens an app. If it hasn't started yet, the mount is
-# enough: it reads the file when it starts.
+# surface-manager reads the file only when it starts (about 2 s into boot, long before this
+# hook), so it needs one restart. Doing that now, while the TV is still starting up and an
+# app is on screen (e.g. web-OSome's TV Home), crashes WebAppMgr, which LG answers by
+# switching the TV off. So wait in the background for the first standby after boot (screen
+# off, LG has closed its apps) and restart it then. If a restart is ever followed by a
+# reboot, don't try again until $PEND is deleted.
+PEND=/home/root/osd-patch/restart-pending
 mount --bind "$P" "$F" || { echo "$(date) mount failed" >> $LOG; exit 0; }
-if systemctl is-active -q surface-manager-daemon.service; then
-  timeout 15 systemctl restart surface-manager-daemon.service
-  echo "$(date) applied, surface-manager restarted (exit $?)" >> $LOG
-else
+if ! systemctl is-active -q surface-manager-daemon.service; then
   echo "$(date) applied before surface-manager started" >> $LOG
+  exit 0
 fi
+if [ -f "$PEND" ]; then
+  echo "$(date) mounted; last restart was followed by a reboot, not restarting (rm $PEND to retry)" >> $LOG
+  exit 0
+fi
+echo "$(date) mounted, will restart surface-manager at the first standby" >> $LOG
+
+luna() { luna-send -n 1 "$1" "$2" </dev/null 2>/dev/null | cat; }
+power() { luna luna://com.webos.service.tvpower/power/getPowerState '{}' | sed -n 's/.*"state" *: *"\([^"]*\)".*/\1/p'; }
+(
+  while :; do
+    sleep 5
+    [ "$(power)" = "Active Standby" ] || continue
+    sleep 5
+    [ "$(power)" = "Active Standby" ] || continue
+    luna luna://com.webos.applicationManager/running '{}' | grep -q '"id":"net.local.tvhome"' && continue
+    touch "$PEND"
+    timeout 15 systemctl restart surface-manager-daemon.service
+    echo "$(date) in standby: surface-manager restarted (exit $?)" >> $LOG
+    sleep 300; rm -f "$PEND"   # still up 5 min later: the restart was fine
+    exit 0
+  done
+) </dev/null >/dev/null 2>&1 &
 exit 0

@@ -39,7 +39,13 @@ A boot script (`40-osd-volume`) goes in the Homebrew Channel's
 - it does nothing if LG's file isn't exactly the one this was made for (checked by
   md5), so a firmware update just turns it off rather than breaking your volume bar;
 - it does nothing if `/home/root/osd-patch/disable` exists;
-- the screen blanks for a second at start-up while surface-manager restarts;
+- surface-manager reads the file only when it starts, so it needs one restart. Doing
+  that during start-up, with an app on screen, can crash LG's web app manager, and the
+  TV then switches itself off. So the script waits for the first time the TV goes to
+  standby after a boot and restarts it then, with the screen off. Until then you see
+  LG's normal bar;
+- if that restart is ever followed by a reboot, it doesn't try again until you delete
+  `/home/root/osd-patch/restart-pending`;
 - it logs to `/tmp/osd-patch.log`.
 
 LG's original file isn't in this repo (it's LG's code), only the diff.
