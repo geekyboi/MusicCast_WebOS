@@ -38,4 +38,4 @@ cp 40-osd-volume "$HOOK"
 chmod +x "$HOOK"
 echo "Applying it now. The screen goes blank for a second or two."
 sh "$HOOK"
-cat /tmp/osd-patch.log 2>/dev/null | tail -n 1
+cat /home/root/osd-patch/log 2>/dev/null | tail -n 1

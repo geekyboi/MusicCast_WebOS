@@ -6,7 +6,7 @@
 F=/usr/lib/qml/WebOSCompositor/views/volume/StarfishVolume.qml
 P=/home/root/osd-patch/StarfishVolume.qml
 ORIG_MD5=808fd0cd00451235b098876477276ad1
-LOG=/tmp/osd-patch.log
+LOG=/home/root/osd-patch/log   # kept across reboots, so a crash can be traced
 
 [ -f /home/root/osd-patch/disable ] && { echo "$(date) disabled by flag" >> $LOG; exit 0; }
 [ -f "$P" ] || exit 0
@@ -39,12 +39,27 @@ power() { luna luna://com.webos.service.tvpower/power/getPowerState '{}' | sed -
     [ "$(power)" = "Active Standby" ] || continue
     sleep 5
     [ "$(power)" = "Active Standby" ] || continue
-    luna luna://com.webos.applicationManager/running '{}' | grep -q '"id":"net.local.tvhome"' && continue
+    # web-OSome loads TV Home hidden in standby; stopping WebAppMgr closes it, so load it again after.
+    TVHOME=; luna luna://com.webos.applicationManager/running '{}' | grep -q '"id":"net.local.tvhome"' && TVHOME=1
     touch "$PEND"
+    # Restarting surface-manager under a running WebAppMgr leaves the Magic Remote pointer
+    # invisible in every web app until a reboot, and restarting WebAppMgr afterwards was
+    # followed by a reboot. So stop WebAppMgr first and start it again once surface-manager is up.
+    timeout 30 systemctl stop webapp-mgr.service
+    echo "$(date) in standby: WebAppMgr stopped (exit $?)" >> $LOG; sync
     timeout 15 systemctl restart surface-manager-daemon.service
-    echo "$(date) in standby: surface-manager restarted (exit $?)" >> $LOG
-    sleep 300; rm -f "$PEND"   # still up 5 min later: the restart was fine
-    exit 0
+    echo "$(date) in standby: surface-manager restarted (exit $?)" >> $LOG; sync
+    sleep 3
+    timeout 30 systemctl start webapp-mgr.service
+    echo "$(date) in standby: WebAppMgr started (exit $?)" >> $LOG; sync
+    if [ -n "$TVHOME" ]; then
+      sleep 5
+      luna luna://com.webos.applicationManager/launch '{"id":"net.local.tvhome","preload":"full"}' >/dev/null
+      echo "$(date) in standby: TV Home loaded hidden again" >> $LOG
+    fi
+    break
   done
+  sleep 300; rm -f "$PEND"   # still up 5 min later: the restart was fine
+  exit 0
 ) </dev/null >/dev/null 2>&1 &
 exit 0
