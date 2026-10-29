@@ -39,7 +39,8 @@ power() { luna luna://com.webos.service.tvpower/power/getPowerState '{}' | sed -
     [ "$(power)" = "Active Standby" ] || continue
     sleep 5
     [ "$(power)" = "Active Standby" ] || continue
-    luna luna://com.webos.applicationManager/running '{}' | grep -q '"id":"net.local.tvhome"' && continue
+    # web-OSome loads TV Home hidden in standby; stopping WebAppMgr closes it, so load it again after.
+    TVHOME=; luna luna://com.webos.applicationManager/running '{}' | grep -q '"id":"net.local.tvhome"' && TVHOME=1
     touch "$PEND"
     # Restarting surface-manager under a running WebAppMgr leaves the Magic Remote pointer
     # invisible in every web app until a reboot, and restarting WebAppMgr afterwards was
@@ -51,6 +52,11 @@ power() { luna luna://com.webos.service.tvpower/power/getPowerState '{}' | sed -
     sleep 3
     timeout 30 systemctl start webapp-mgr.service
     echo "$(date) in standby: WebAppMgr started (exit $?)" >> $LOG; sync
+    if [ -n "$TVHOME" ]; then
+      sleep 5
+      luna luna://com.webos.applicationManager/launch '{"id":"net.local.tvhome","preload":"full"}' >/dev/null
+      echo "$(date) in standby: TV Home loaded hidden again" >> $LOG
+    fi
     break
   done
   sleep 300; rm -f "$PEND"   # still up 5 min later: the restart was fine
