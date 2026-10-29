@@ -44,12 +44,12 @@ A boot script (`40-osd-volume`) goes in the Homebrew Channel's
   TV then switches itself off. So the script waits for the first time the TV goes to
   standby after a boot and restarts it then, with the screen off. Until then you see
   LG's normal bar;
-- that restart leaves LG's web app manager unable to draw the Magic Remote pointer (it
-  still moves and selects, but is invisible), so the script restarts the web app manager
-  straight after, still in standby;
+- restarting it under LG's running web app manager leaves the Magic Remote pointer
+  invisible (it still moves and selects), so the script stops the web app manager first
+  and starts it again afterwards, still in standby;
 - if that restart is ever followed by a reboot, it doesn't try again until you delete
   `/home/root/osd-patch/restart-pending`;
-- it logs to `/tmp/osd-patch.log`.
+- it logs to `/home/root/osd-patch/log`.
 
 LG's original file isn't in this repo (it's LG's code), only the diff.
 
@@ -119,8 +119,8 @@ the new firmware.
 
 Edit the patched copy at `/home/root/osd-patch/StarfishVolume.qml` with `cat >` (that
 keeps the same file, so the existing mount sees it), then
-`systemctl restart surface-manager-daemon.service && sleep 10 && systemctl restart webapp-mgr.service`
-(that last part brings the pointer back). The changes are all marked
+`systemctl stop webapp-mgr.service; systemctl restart surface-manager-daemon.service; sleep 3; systemctl start webapp-mgr.service`
+(stopping the web app manager first keeps the pointer working). The changes are all marked
 `osd-patch` / `amp` in the file.
 
 ## Licence
