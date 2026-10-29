@@ -43,8 +43,16 @@ power() { luna luna://com.webos.service.tvpower/power/getPowerState '{}' | sed -
     touch "$PEND"
     timeout 15 systemctl restart surface-manager-daemon.service
     echo "$(date) in standby: surface-manager restarted (exit $?)" >> $LOG
-    sleep 300; rm -f "$PEND"   # still up 5 min later: the restart was fine
-    exit 0
+    break
   done
+  # That restart leaves WebAppMgr unable to load the pointer images, so the Magic Remote
+  # pointer is invisible in every web app (YouTube, LG's home, TV Home) until a reboot.
+  # Restart WebAppMgr too, once it's had time to reconnect, and only while still in standby.
+  sleep 10
+  until [ "$(power)" = "Active Standby" ]; do sleep 5; done
+  timeout 30 systemctl restart webapp-mgr.service
+  echo "$(date) in standby: WebAppMgr restarted (exit $?)" >> $LOG
+  sleep 300; rm -f "$PEND"   # still up 5 min later: the restarts were fine
+  exit 0
 ) </dev/null >/dev/null 2>&1 &
 exit 0
